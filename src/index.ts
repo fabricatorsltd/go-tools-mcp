@@ -16,7 +16,7 @@ export class GoToolsMCP extends McpAgent<Env> {
     name: "go-tools",
     version: "0.1.0",
     description:
-      "Reference documentation for the mirkobrombin / Fabricators Go modules ecosystem. " +
+      "Reference documentation for the go-tools ecosystem. " +
       "22 modules covering auth, caching, routing, jobs, ORM, FSM, logging, and more.",
   });
 
@@ -25,7 +25,7 @@ export class GoToolsMCP extends McpAgent<Env> {
     this.server.tool(
       "list_modules",
       "List all available Go modules with their import paths and one-line descriptions. " +
-        "Use this to discover which module handles a specific concern before fetching full docs.",
+      "Use this to discover which module handles a specific concern before fetching full docs.",
       {},
       async () => {
         if (modules.length === 0) {
@@ -52,13 +52,13 @@ export class GoToolsMCP extends McpAgent<Env> {
     this.server.tool(
       "get_module",
       "Get complete documentation for a specific Go module — API reference, usage examples, " +
-        "configuration options, and integration notes.",
+      "configuration options, and integration notes.",
       {
         name: z
           .string()
           .describe(
             "Module name or partial alias. " +
-              "Examples: 'go-relay', 'relay', 'go-relay/v2', 'warp', 'state-flow', 'wormhole', 'signal'."
+            "Examples: 'go-relay', 'relay', 'go-relay/v2', 'warp', 'state-flow', 'wormhole', 'signal'."
           ),
       },
       async ({ name }) => {
@@ -84,14 +84,14 @@ export class GoToolsMCP extends McpAgent<Env> {
     this.server.tool(
       "search_modules",
       "Search across all module documentation using keywords or concepts. " +
-        "Use this when you are unsure which module handles a specific concern.",
+      "Use this when you are unsure which module handles a specific concern.",
       {
         query: z
           .string()
           .describe(
             "Keywords or concept to search for. " +
-              "Examples: 'distributed lock', 'HMAC token signing', 'FSM transitions', " +
-              "'retry backoff', 'worker pool', 'saga compensation', 'code-first migration'."
+            "Examples: 'distributed lock', 'HMAC token signing', 'FSM transitions', " +
+            "'retry backoff', 'worker pool', 'saga compensation', 'code-first migration'."
           ),
       },
       async ({ query }) => {
@@ -124,7 +124,7 @@ export class GoToolsMCP extends McpAgent<Env> {
     this.server.tool(
       "get_ecosystem",
       "Get the ecosystem integration diagram and design principles — how all modules fit together, " +
-        "dependency direction, two-tier async pipeline, caching layer, and data access patterns.",
+      "dependency direction, two-tier async pipeline, caching layer, and data access patterns.",
       {},
       async () => {
         const text = ecosystem.trim() || "Ecosystem section not found in index.";

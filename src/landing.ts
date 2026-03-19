@@ -371,7 +371,7 @@ export const LANDING_HTML = `<!DOCTYPE html>
       <h1><span>go-tools</span></h1>
       <p class="tagline">
         22 Go modules by <a href="https://github.com/mirkobrombin" style="color:var(--accent);text-decoration:none">Mirko Brombin</a> /
-        <a href="https://github.com/fabricatorsltd" style="color:var(--accent);text-decoration:none">Fabricators</a> —
+        <a href="https://github.com/fabricatorsltd" style="color:var(--accent);text-decoration:none">fabricators</a> —
         covering auth, caching, routing, async jobs, ORM, FSM, logging, and more.
         The <a href="https://modelcontextprotocol.io" style="color:var(--accent);text-decoration:none">MCP</a> server
         gives any AI client instant access to the full documentation.
