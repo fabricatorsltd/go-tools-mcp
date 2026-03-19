@@ -126,4 +126,4 @@ export class GoToolsMCP extends McpAgent {
   }
 }
 
-export default GoToolsMCP.mount("/mcp");
+export default GoToolsMCP.serve("/mcp");

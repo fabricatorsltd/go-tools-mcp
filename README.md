@@ -1,6 +1,8 @@
 # go-tools-mcp
 
-Remote [MCP](https://modelcontextprotocol.io) server for the [mirkobrombin/Fabricators Go modules](../go-tools-index.md) ecosystem. Hosted as a stateless Cloudflare Worker.
+Remote [MCP](https://modelcontextprotocol.io) server for the [mirkobrombin/Fabricators Go modules](./go-tools-index.md) ecosystem. Hosted as a Cloudflare Worker.
+
+**Endpoint:** `https://go-tools.fabricators.ltd/mcp`
 
 Exposes four tools to any MCP client (Claude, Cursor, Windsurf, Copilot CLI, …):
 
@@ -14,28 +16,25 @@ Exposes four tools to any MCP client (Claude, Cursor, Windsurf, Copilot CLI, …
 ## Setup
 
 ```bash
-npm install        # installs deps AND generates src/data/index.ts from go-tools-index.md
+pnpm install   # installs deps AND generates data.ts from go-tools-index.md
 ```
-
-The `postinstall` script reads `../go-tools-index.md` and embeds its content into
-`src/data/index.ts`. Re-run `npm run update-index` whenever the index changes.
 
 ## Local development
 
 ```bash
-npm run dev        # wrangler dev → http://localhost:8787/mcp
+pnpm dev       # wrangler dev → http://localhost:8787/mcp
 ```
 
 Test with MCP Inspector:
 ```bash
-npx @modelcontextprotocol/inspector@latest
+pnpm dlx @modelcontextprotocol/inspector@latest
 # Connect to: http://localhost:8787/mcp
 ```
 
 ## Deploy
 
 ```bash
-npm run deploy     # wrangler deploy → https://go-tools-mcp.<account>.workers.dev/mcp
+pnpm deploy    # wrangler deploy → https://go-tools.fabricators.ltd/mcp
 ```
 
 ## Connect from an MCP client
@@ -44,16 +43,23 @@ npm run deploy     # wrangler deploy → https://go-tools-mcp.<account>.workers.
 {
   "mcpServers": {
     "go-tools": {
-      "url": "https://go-tools-mcp.<your-account>.workers.dev/mcp"
+      "url": "https://go-tools.fabricators.ltd/mcp"
     }
   }
 }
 ```
 
+## Update the index
+
+```bash
+pnpm update-index   # re-embeds go-tools-index.md into data.ts
+pnpm deploy         # redeploy
+```
+
 ## Architecture
 
+- **Transport:** Streamable HTTP (`serve("/mcp")`) — MCP 2025 standard, single `POST /mcp` endpoint
 - **No auth** — public documentation, no OAuth required
 - **No external storage** — index content is bundled into the Worker at deploy time
-- **Stateless tools** — no session state; `McpAgent` provides the MCP transport layer
-- **Update workflow** — edit `../go-tools-index.md` → `npm run update-index` → `npm run deploy`
+- **Durable Objects** — `McpAgent` uses a DO for MCP session state (required by the protocol)
 
