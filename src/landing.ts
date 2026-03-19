@@ -582,7 +582,7 @@ go-slipstream — embedded Bitcask+Raft database
     </main>
 
     <footer>
-      Part of the <a href="https://github.com/mirkobrombin/Fabricators">Fabricators</a> ecosystem ·
+      Part of the <a href="https://github.com/fabricatorsltd">fabricators</a> ecosystem ·
       <a href="https://go-tools.fabricators.ltd/mcp">MCP endpoint</a>
     </footer>
   </div>
