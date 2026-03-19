@@ -7,11 +7,7 @@ import { parseIndex, findModule, searchModules } from "./parser";
 // Parse once at Worker startup — content is static per deployment
 const { modules, ecosystem } = parseIndex(INDEX_CONTENT);
 
-interface Env {
-  GoToolsMCP: DurableObjectNamespace;
-}
-
-export class GoToolsMCP extends McpAgent<Env> {
+export class GoToolsMCP extends McpAgent {
   server = new McpServer({
     name: "go-tools",
     version: "0.1.0",
@@ -130,6 +126,4 @@ export class GoToolsMCP extends McpAgent<Env> {
   }
 }
 
-export default {
-  fetch: GoToolsMCP.mount("/mcp"),
-} satisfies ExportedHandler<Env>;
+export default GoToolsMCP.mount("/mcp");
