@@ -10,6 +10,7 @@
     "update-index": "node update-index.mjs",
     "type-check": "tsc --noEmit"
   },
+  "packageManager": "pnpm@latest",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
     "agents": "^0.0.89",

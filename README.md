@@ -19,28 +19,28 @@ Espone 4 tool MCP via Cloudflare Workers, permettendo a qualsiasi agente AI (Cla
 
 ```bash
 cd go-tools-mcp
-npm install
-# `postinstall` genera automaticamente data.ts da ../go-tools-index.md
+pnpm install
+# `postinstall` genera automaticamente data.ts da go-tools-index.md
 ```
 
 ### 2. Sviluppo locale
 
 ```bash
-npm run dev
+pnpm dev
 # Worker disponibile su http://localhost:8787/mcp
 ```
 
 Testa con [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 ```bash
-npx @modelcontextprotocol/inspector@latest
+pnpm dlx @modelcontextprotocol/inspector@latest
 # URL: http://localhost:8787/mcp
 ```
 
 ### 3. Deploy su Cloudflare Workers
 
 ```bash
-npx wrangler login   # solo prima volta
-npm run deploy
+pnpm dlx wrangler login   # solo prima volta
+pnpm deploy
 # → https://go-tools-mcp.<account>.workers.dev/mcp
 ```
 
@@ -49,8 +49,8 @@ npm run deploy
 Quando aggiorni `go-tools-index.md`:
 
 ```bash
-npm run update-index   # rigenera data.ts
-npm run deploy         # rideploya il Worker
+pnpm update-index   # rigenera data.ts
+pnpm deploy         # rideploya il Worker
 ```
 
 ## Configurazione client MCP
@@ -94,8 +94,9 @@ gh copilot config mcp add go-tools https://go-tools-mcp.<account>.workers.dev/mc
 go-tools-mcp/
 ├── index.ts              # Worker entrypoint + McpAgent con i 4 tool
 ├── parser.ts             # parseIndex(), findModule(), searchModules()
-├── data.ts               # INDEX_CONTENT — generato da update-index.mjs (gitignored)
-├── update-index.mjs      # Script di generazione data.ts
+├── data.ts               # INDEX_CONTENT — generato da update-index.mjs, committato
+├── go-tools-index.md     # Documentazione sorgente (fonte di verità)
+├── update-index.mjs      # Script: legge go-tools-index.md → scrive data.ts
 ├── wrangler.jsonc        # Cloudflare Worker config
 ├── package.json
 └── tsconfig.json

@@ -1,5 +1,3 @@
 node_modules/
 .wrangler/
 dist/
-# Generated from go-tools-index.md — re-run `npm run update-index` to refresh
-data.ts

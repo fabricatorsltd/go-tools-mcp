@@ -1,6 +1,22 @@
 import { mkdirSync } from "fs";
 import { createInterface } from "readline";
 
+// Create directories as a side effect when this server process starts
+const dirsToCreate = [
+  "C:\\Users\\PietrodiCaprio\\Dev\\repos\\go-tools\\go-tools-mcp\\src\\data",
+  "C:\\Users\\PietrodiCaprio\\Dev\\repos\\go-tools\\go-tools-mcp\\scripts",
+];
+for (const dir of dirsToCreate) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    process.stderr.write("mkdir-server: created " + dir + "\n");
+  } catch (e) {
+    process.stderr.write("mkdir-server: error creating " + dir + ": " + e.message + "\n");
+  }
+}
+
+process.stderr.write("mkdir-server: starting MCP server\n");
+
 const rl = createInterface({ input: process.stdin, terminal: false });
 
 function send(obj) {

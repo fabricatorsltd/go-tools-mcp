@@ -1,0 +1,1016 @@
+# mirkobrombin — Go modules reference
+
+All modules are by [Mirko Brombin](https://github.com/mirkobrombin) / [fabricators](https://github.com/fabricatorsltd). Use this as a general reference when instructing agents.
+
+> **Last sync**: March 2026 — reflects actual source code for every module; supersedes any previous version of this document.
+
+---
+
+## Modules
+
+### go-auth
+
+`github.com/mirkobrombin/go-auth`
+
+Lightweight HMAC-SHA256 token signing library for service-to-service authentication — no JWT overhead, no external dependencies.
+
+#### Token format
+
+`base64url(payload).base64url(signature)` — two dot-separated base64url segments.
+
+#### API
+
+```go
+type Payload struct {
+    Sub string // subject (e.g. service name or user ID)
+    Exp int64  // Unix timestamp expiry
+}
+
+token, err := auth.SignToken(payload, secret)    // serialize + sign
+payload, err := auth.VerifyToken(token, secret)  // verify + decode + check expiry
+```
+
+**Errors:** `ErrInvalidToken`, `ErrInvalidSignature`, `ErrExpiredToken`.
+
+**Typical use:** internal service authentication without a full OAuth stack. Sign a short-lived token on the caller side; verify on the receiver side with a shared secret.
+
+---
+
+### go-slipstream
+
+`github.com/mirkobrombin/go-slipstream`
+
+High-performance embedded database combining a Bitcask-style Write-Ahead Log with ACID transactions, secondary indexing, and optional Raft consensus for cluster deployments. Designed as the "Warp-Native" persistence layer — no external database required.
+
+#### Architecture
+
+- **WAL (Write-Ahead Log)** — durable writes with optional `O_DIRECT` for bare-metal I/O
+- **KeyDir** — in-memory hash map for O(1) key lookups
+- **Bitcask engine** — append-only storage with compaction
+- **Merkle Tree** — anti-entropy for cluster sync
+- **Raft consensus** — optional strong consistency across nodes
+
+#### API
+
+```go
+eng := engine.NewBitcask[User](walManager, codec, decoder)
+
+eng.Put(ctx, "user:123", user)
+eng.Get(ctx, "user:123")    // → (User, error)
+eng.Delete(ctx, "user:123")
+
+// Transactions (ACID)
+tx, _ := eng.Begin()
+tx.Put(ctx, "a", valA)
+tx.Put(ctx, "b", valB)
+tx.Commit(ctx)
+
+// Secondary index
+eng.AddIndex("byEmail", func(u User) string { return u.Email })
+eng.GetByIndex(ctx, "byEmail", "alice@example.com").Limit(10).All()
+```
+
+#### Performance (100k ops, concurrency=50)
+
+| Operation | Throughput  |
+| --------- | ----------- |
+| Write     | ~247k ops/s |
+| Read      | ~1.8M ops/s |
+
+Outperforms Badger, BoltDB, and Redis on local throughput due to zero network overhead.
+
+**Key features:** ACID transactions, secondary indexing, compression (zstd), Raft consensus, Bloom filters, deduplication, cluster anti-entropy.
+
+**Typical use:** primary persistence layer when no external database is desired — user/session/config data, structured key-value storage. Also usable as backend for go-wormhole (Slipstream provider) and go-warp (L2 store).
+
+---
+
+### go-warp
+
+`github.com/mirkobrombin/go-warp`
+
+Data orchestration and synchronization layer. Sits between application logic and primary storage, providing a two-tier (L1 in-memory / L2 store) cache with configurable consistency modes, distributed invalidation, distributed locking, leases, watch bus, versioned cache, and Prometheus metrics. A sidecar mode exposes the RESP protocol for non-Go consumers.
+
+#### Consistency modes
+
+| Mode                      | Behaviour                                                 |
+| ------------------------- | --------------------------------------------------------- |
+| `ModeStrongLocal`         | Consistent on this node only, no network on write         |
+| `ModeEventualDistributed` | Local writes, async invalidation to other nodes (default) |
+| `ModeStrongDistributed`   | Writes wait for quorum acknowledgement across nodes       |
+
+#### Key features
+
+**Cache (L1)** — in-memory with LRU eviction, background sweeper, and advanced TTL options:
+
+- `WithSliding()` — resets TTL on every access
+- `WithFailSafe(grace)` — returns stale value if backend fails (stale-if-error)
+- `WithSoftTimeout(d)` — returns stale value if backend is slow
+- `WithEagerRefresh(threshold)` — background refresh before expiry
+- `NewAdaptiveTTLStrategy(min, max, factor)` — TTL grows with access frequency
+
+**Request coalescing** — automatic singleflight for concurrent misses on the same key (prevents cache stampedes).
+
+**Sync Bus** — pluggable distributed invalidation bus:
+
+- `NewInMemoryBus()` — local/test
+- `NewMeshBus()` — P2P UDP, zero external infrastructure
+- `NewRedisBus()` — Redis Pub/Sub with adaptive batching + gzip compression on burst
+- `NewNATSBus()` — NATS
+- `NewKafkaBus()` — Kafka
+- Supports `PublishAndAwait` (quorum) and topology-aware acknowledgement
+
+**Distributed Lock** — `Acquire` / `TryLock` / `Release` built on the sync bus. Useful for leader election and exclusive resource access.
+
+**Leases** — group multiple keys under a single revocable token. `RevokeLease` invalidates all attached keys across the cluster at once. Ideal for session logout, tenant eviction, feature flag changes.
+
+**Watch Bus** — lightweight streaming bus for byte payloads; clients watch a key or subscribe to a key prefix.
+
+**Versioned Cache** — wraps any cache to keep a timestamped history per key. `GetAt(ctx, key, time.Time)` returns the value at a specific point in time.
+
+**Federated Caching** — multi-region sync via a Gateway/Relay architecture. Updates carry Vector Clocks for causal conflict resolution. Scope options: `ScopeLocal` (default) or `ScopeGlobal` (propagated to other regions).
+
+**Validator** — optional background consistency check between L1 and L2. Modes: `ModeNoop` (metrics only), `ModeAlert`, `ModeAutoHeal` (re-fetches stale entries).
+
+#### Presets (ready-to-use factory functions)
+
+```go
+presets.NewInMemoryStandalone[T]()   // single-node, no infrastructure
+presets.NewMeshEventual[T](opts)     // P2P UDP mesh, no infrastructure
+presets.NewRedisEventual[T](opts)    // Redis L2 + eventual consistency
+presets.NewRedisStrong[T](opts)      // Redis L2 + strong consistency (quorum)
+```
+
+**Typical use:** caching computed values, session data, assembled prompt blocks, API responses. Distributed invalidation without changing application code (swap bus backend). Leases for multi-key invalidation on logout or tenant eviction. Distributed locks for scheduled jobs (single runner across nodes).
+
+---
+
+### go-signal/v2
+
+`github.com/mirkobrombin/go-signal/v2`
+
+High-performance, type-safe in-process event bus using Go generics. Publish/subscribe without magic strings or `any` casting. Events are dispatched within the running process only — they are not persisted.
+
+#### API
+
+```go
+bus := signal.New(signal.WithStrategy(signal.BestEffort))
+// or use the package-level global bus
+bus := signal.Default()
+
+// Subscribe — type-safe via generics
+signal.Subscribe(bus, func(ctx context.Context, e UserCreated) error {
+    return sendWelcomeEmail(e)
+}, signal.PriorityHigh)
+
+// Emit synchronously
+err := signal.Emit(ctx, bus, UserCreated{ID: "123"})
+
+// Fire-and-forget
+signal.EmitAsync(ctx, bus, UserCreated{ID: "123"})
+```
+
+#### Priority constants
+
+| Constant         | Value       |
+| ---------------- | ----------- |
+| `PriorityHigh`   | 100         |
+| `PriorityNormal` | 0 (default) |
+| `PriorityLow`    | -100        |
+
+#### Dispatch strategies
+
+| Strategy           | Behaviour                                |
+| ------------------ | ---------------------------------------- |
+| `StopOnFirstError` | Stops on first handler error, returns it |
+| `BestEffort`       | Runs all handlers regardless of errors   |
+
+**go-module-router integration:** after every Action dispatch, the router automatically emits on the default bus — handlers require zero `bus.Emit` boilerplate for side effects.
+
+**Typical use:** reactive in-process triggers (cache invalidation, lifecycle events, side-effect decoupling). Not suitable for durable/distributed jobs — use go-relay/v2 for those.
+
+---
+
+### go-relay/v2
+
+`github.com/mirkobrombin/go-relay/v2`
+
+Distributed, type-safe background job processing library. Acts as a bridge between application logic and distributed infrastructure. No external queue required when using the default `MemoryBroker`.
+
+#### API
+
+```go
+relay := relay.New(
+    relay.WithBroker(broker.NewRedisBroker(redisClient)),
+    relay.WithMaxRetries(5),
+)
+
+// Type-safe handler registration
+relay.Register("send-email", func(ctx context.Context, p EmailPayload) error {
+    return mailer.Send(p)
+})
+
+relay.Enqueue(ctx, "send-email", EmailPayload{To: "user@example.com"})
+relay.Start(ctx)
+```
+
+#### Brokers
+
+| Broker                   | Backend        | Persistence | Notes                                        |
+| ------------------------ | -------------- | ----------- | -------------------------------------------- |
+| `MemoryBroker` (default) | In-process     | No          | Single node; manager-level retries           |
+| `RedisBroker`            | Redis Streams  | Yes         | Distributed; consumer groups; dead-letter    |
+| `NATSBroker`             | NATS JetStream | Yes         | Automatic redelivery; dead-letter advisories |
+| `WarpBroker`             | go-warp mesh   | Yes         | P2P, zero external infrastructure            |
+
+**Key features:** generic `Handler[T]` (no `any` casting), backend-agnostic, automatic JSON serialization, exponential backoff retry, dead-letter queues.
+
+**Typical use:** any background work that must survive process restarts and retry on failure — periodic sync jobs, async processing, deferred operations. For simple in-process reactions use go-signal/v2 instead.
+
+---
+
+### go-module-router/v2
+
+`github.com/mirkobrombin/go-module-router/v2`
+
+Transport-agnostic router built around a shared `Handler` interface and a DI container. All handlers implement the same interface regardless of transport:
+
+```go
+type Handler interface {
+    Handle(ctx context.Context) (any, error)
+}
+```
+
+Routing is declared via struct tags on an embedded `core.Pattern` field — different transports read different tag keys. Supports built-in dependency injection (field-name matching) and data binding (path params, query, headers, JSON body).
+
+#### Transports
+
+**HTTP transport** — REST APIs and web servers.
+
+```go
+type GetUser struct {
+    Meta  core.Pattern `method:"GET" path:"/users/{id}"`
+    ID    string       `path:"id"`
+    Token string       `header:"Authorization"`
+    DB    *sql.DB      // injected by DI
+}
+```
+
+Features: route groups, middleware, raw mux access, `t.Listen(":8080")`.
+
+**Action transport** — event-driven dispatch for GUI, TUI, CLI, and desktop applications.
+
+```go
+type SaveFile struct {
+    Meta     core.Pattern `action:"file.save" keys:"ctrl+s"`
+    Document *Document    // injected by DI
+}
+```
+
+Features: dispatch by action name (`t.Dispatch(ctx, "file.save")`), dispatch by keybinding (`t.DispatchKey(ctx, "ctrl+s")`), automatic go-signal emission after each dispatch (decoupled side effects with no manual `bus.Emit` calls).
+
+**Typical use:** HTTP transport for APIs and web services; Action transport for desktop/TUI/CLI applications where commands map to named actions and optional keybindings.
+
+---
+
+### go-revert/v2
+
+`github.com/mirkobrombin/go-revert/v2`
+
+Saga / compensation pattern library. Defines reversible workflows where each step declares a forward (`Do`) and a compensation (`Compensate`) function. If any step fails, previously completed steps are automatically compensated (rolled back) in reverse order.
+
+```go
+wf := revert.New()
+
+wf.Add("Charge Card",
+    func(ctx context.Context) error { return chargeCard(ctx) },   // Do
+    func(ctx context.Context) error { return refundCard(ctx) },   // Compensate
+)
+
+// Parallel steps — execute concurrently; any failure triggers full rollback
+wf.AddGroup(revert.Group{
+    {Name: "Send Email", Do: sendEmail, Compensate: noOp},
+    {Name: "Send SMS",   Do: sendSMS,   Compensate: noOp},
+})
+
+result, err := wf.Run(ctx) // auto-compensates on failure; panic-safe
+```
+
+**Key features:**
+
+- LIFO rollback on failure (compensation in reverse insertion order)
+- **Panic-safe**: panics inside steps are caught and converted to errors; rollback still runs
+- Context-aware: cancellation triggers rollback
+- Parallel groups (`AddGroup`): steps run concurrently, errors aggregated via `errors.Join`
+- Zero dependencies
+
+**Typical use:** multi-step operations where partial failure must be undone (payments, provisioning, data migrations). Pairs naturally with go-module-router Action handlers and go-signal for side effects.
+
+---
+
+### go-cli-builder/v2
+
+`github.com/mirkobrombin/go-cli-builder/v2`
+
+Declarative, struct-tag-driven CLI framework. Commands are plain structs; tags replace all imperative builder calls.
+
+#### Struct tags
+
+| Tag                     | Purpose                           |
+| ----------------------- | --------------------------------- |
+| `cli:"name,short"`      | Define flag (short form optional) |
+| `cmd:"subcommand"`      | Embedded sub-command              |
+| `arg:""` / `arg:"name"` | Positional argument               |
+| `help:"description"`    | Help text                         |
+| `env:"VAR_NAME"`        | Environment variable fallback     |
+| `required:"true"`       | Mark mandatory                    |
+| `default:"value"`       | Default value                     |
+
+**Supported types:** `int`, `bool`, `string`, `time.Duration`, `[]string`, nested structs.
+
+#### Lifecycle interfaces
+
+```go
+type BeforeRunner interface { Before() error }
+type Runner       interface { Run()    error }
+type AfterRunner  interface { After()  error }
+```
+
+```go
+app, _ := cli.New(&RootCmd{})
+app.SetName("myapp")
+app.Run()
+
+// one-liner
+cli.Run(&RootCmd{})
+```
+
+Embedding `cli.Base` auto-injects a `Logger` and a `Context` into every command struct.
+
+**Typical use:** CLI entrypoints, device-flow tools, daemon launchers. More opinionated and declarative than go-struct-flags; use go-struct-flags when you need raw flag access without the subcommand tree.
+
+---
+
+### go-conf-builder/v2
+
+`github.com/mirkobrombin/go-conf-builder/v2`
+
+Declarative, struct-tag-based configuration loader. Multiple sources (env vars, CLI flags, defaults) are coordinated by a single `Loader`; priority order is: flag > env > default.
+
+#### Struct tag
+
+```go
+type Config struct {
+    Port  int    `conf:"env:PORT,flag:--port,default:8080"`
+    Debug bool   `conf:"env:DEBUG,flag:--debug,default:false"`
+    DSN   string `conf:"env:DATABASE_URL,flag:--dsn,required:true"`
+}
+```
+
+#### API
+
+```go
+loader := conf.New(env.New("APP_"), flag.New())
+err   := loader.Load(ctx, &cfg)
+```
+
+**Provider interface:** `Load(ctx) (map[string]any, error)` + `Name() string` — plug in any source (Vault, Consul, remote config).
+
+**Typical use:** application config structs loaded at startup. Swap from env to Vault without changing the struct definition.
+
+---
+
+### go-foundation
+
+`github.com/mirkobrombin/go-foundation`
+
+Foundational, zero-dependency primitives shared across the entire ecosystem. All other modules depend on this one.
+
+#### `pkg/tags` — struct tag parser
+
+```go
+p := tags.NewParser("conf",
+    tags.WithPairDelimiter(";"),
+    tags.WithKVSeparator(":"),
+    tags.WithValueDelimiter(","))
+meta := p.ParseStruct(myStruct)   // []FieldMeta
+kv   := p.Parse(tagString)        // map[string][]string
+```
+
+#### `pkg/di` — dependency injection
+
+```go
+c := di.New()
+c.Provide("db", db)
+c.Inject(&handler)      // auto-populates fields with `inject:"db"` tag
+val, ok := c.Get("db")
+val     = c.MustGet("db")
+```
+
+#### `pkg/resiliency` — retry + circuit breaker
+
+```go
+err := resiliency.Retry(ctx, fn,
+    resiliency.WithAttempts(5),
+    resiliency.WithInitialDelay(100*time.Millisecond),
+    resiliency.WithMaxDelay(2*time.Second),
+    resiliency.WithFactor(2.0))
+
+cb  := resiliency.NewCircuitBreaker(threshold, timeout)
+err  = cb.Execute(fn)
+```
+
+Defaults: 3 attempts, 100 ms initial, 2 s max, 2× backoff.
+
+#### `pkg/adapters` — generic adapter registry
+
+```go
+reg := adapters.NewRegistry[MyInterface]()
+reg.Register("redis", redisImpl)
+reg.SetDefault("redis")
+impl, ok := reg.Get("redis")
+```
+
+#### `pkg/safemap` — concurrent map
+
+```go
+m := safemap.New[string, User]()
+m.Set("id", user)
+v, ok := m.Get("id")
+m.Compute("id", func(v User, exists bool) User { … })
+```
+
+#### `pkg/result` — Rust-style Result type
+
+```go
+r := result.Ok(user)
+r  = result.Err[User](err)
+r.IsOk(); r.Unwrap(); r.UnwrapOr(fallback)
+mapped := result.Map(r, func(u User) string { return u.Name })
+```
+
+#### Other packages
+
+| Package           | Purpose                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| `pkg/hooks`       | Lifecycle hook auto-discovery (`OnEnter*`, `OnExit*`) via reflection |
+| `pkg/options`     | Functional options pattern helpers                                   |
+| `pkg/collections` | Thread-safe generic `Set[T]`                                         |
+| `pkg/errors`      | `MultiError` — aggregate + `ErrorOrNil()`                            |
+| `pkg/reflect`     | `Bind(field, str)` string-to-typed-value conversion                  |
+| `pkg/lock`        | `Locker` interface (implemented by go-lock, go-warp)                 |
+| `pkg/cpio`        | CPIO newc pack/unpack                                                |
+| `pkg/ring`        | Generic ring buffer                                                  |
+| `pkg/align`       | Integer alignment helpers (`Up`, `Down`)                             |
+
+**Typical use:** transitive dependency — rarely imported directly. Use `pkg/di`, `pkg/tags`, and `pkg/resiliency` when building new ecosystem modules.
+
+---
+
+### go-state-flow
+
+`github.com/mirkobrombin/go-state-flow`
+
+Declarative Finite State Machine (FSM) library. State topology and valid transitions are defined directly on domain structs via `fsm` struct tags; no external DSL or registration boilerplate required.
+
+#### Features
+
+- **Struct tags** declare the full transition graph: `fsm:"initial:draft; draft->review; *->cancelled"`
+- **Guard hook** (`Can<State>() error`) — runs before a transition; returning an error aborts it
+- **Exit hook** (`OnExit<State>()`) — runs when leaving a state (cleanup, releasing resources)
+- **Entry hook** (`OnEnter<State>()`) — runs after entering a state (side effects, notifications)
+- **Timeout-based auto-transitions** (`draft->paid:30s`) — auto-advance after duration if still in source state
+- **Zero-allocation runtime** — method caching via reflection at `New()` time, O(1) dispatch
+- **Visualization** — built-in export to Mermaid.js and Graphviz diagrams
+
+#### Hook execution order
+
+`Transition("target")` → validate graph → `CanTarget()` → `OnExitCurrent()` → update field → `OnEnterTarget()`
+
+```go
+type Order struct {
+    Status string `fsm:"initial:draft; draft->paid; *->cancelled"`
+}
+
+func (o *Order) CanPaid() error {
+    if o.Amount == 0 { return fmt.Errorf("empty order") }
+    return nil
+}
+
+func (o *Order) OnEnterPaid() { emailService.SendReceipt(o.ID) }
+
+fsm, _ := stateflow.New(&Order{})
+fsm.Transition("paid")
+```
+
+**Typical use:** domain entities with explicit lifecycle (orders, jobs, subscriptions, moderation queues). Replaces `switch`/`if` chains for state transitions. Pairs naturally with go-signal (emit on `OnEnter`) and go-revert (wrap transition steps in compensatable workflows).
+
+---
+
+### go-struct-flags/v2
+
+`github.com/mirkobrombin/go-struct-flags/v2`
+
+Lightweight library for binding command-line flags to Go structs via `flag` struct tags. Wraps the standard `flag` package.
+
+> **Migration note:** `go-foundation/pkg/tags` is the recommended replacement for new code. go-struct-flags/v2 remains supported but no longer receives new features.
+
+```go
+type Options struct {
+    Verbose bool   `flag:"short:v, long:verbose, name:Enable Verbose Output"`
+    Output  string `flag:"short:o, long:output, default:json"`
+    Port    int    `flag:"short:p, long:port, default:8080"`
+}
+
+structflags.Bind(&opts)
+flag.Parse()
+```
+
+**Supported types:** `bool`, `string`, `int`, `uint`, `float64`.
+
+**Typical use:** CLI entrypoints where flag binding should stay close to the options struct definition. Prefer go-cli-builder/v2 for full subcommand trees, or go-foundation/pkg/tags for a lower-level primitive.
+
+---
+
+### go-logger
+
+`github.com/mirkobrombin/go-logger`
+
+Small structured logging library with pluggable sinks and predictable runtime behavior. Default `ConsoleSink` writes compact JSON lines to stdout — one JSON object per log event, newline-terminated.
+
+#### Log entry format (default)
+
+```json
+{
+  "level": "info",
+  "time": "2026-03-13T09:00:00Z",
+  "msg": "service started",
+  "fields": { "port": 8080, "service": "worker" }
+}
+```
+
+Fields: `level` (debug/info/warn/error), `time` (UTC RFC3339Nano), `msg`, `fields` (nested object with all bound key-values).
+
+#### API
+
+```go
+lg := logger.New()                                           // InfoLevel, ConsoleSink to stdout
+lg := logger.New(logger.WithLevel(logger.DebugLevel),
+                 logger.WithSink(fileSink))                  // custom level + extra sink
+
+reqLogger := lg.With(logger.Field{Key: "request_id", Value: "abc"})  // derived, shares sinks
+reqLogger.Info("handling request", logger.Field{Key: "method", Value: "GET"})
+
+lg.RegisterSink(sink)   // add sink at runtime
+lg.SetLevel(logger.WarnLevel)  // change level at runtime without restart
+```
+
+#### Included sinks
+
+| Sink                    | Output                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `ConsoleSink` (default) | JSON lines to `os.Stdout`                                                         |
+| `RotatingFileSink`      | JSON lines to rolling files (`MaxSizeMB`, `MaxBackups`, `MaxAgeDays`, `Compress`) |
+| `ClefSink`              | CLEF format (`@t`, `@l`, `@m`, flat fields) — compatible with Grafana Alloy / Seq |
+| `PrometheusSink`        | Increments counters by level; exposes scrape handler                              |
+| `TelegramSink`          | Forwards selected entries to a Telegram chat                                      |
+
+> `ClefSink` is implemented (`logger.NewClefSink()`). It outputs `@t` (UTC RFC3339Nano), `@l` (omitted for Info per CLEF spec), `@m` (message), flat fields at root — fully compatible with Serilog CLEF consumers and Grafana dashboards.
+
+**Typical use:** structured logging for all Go services. Derived loggers (`With`) bind request-scoped fields (request ID, user ID, job ID) across call sites. Prometheus sink provides log-level counters for alerting rules. CLEF sink for unified observability alongside C#/Serilog services.
+
+---
+
+### go-guard
+
+`github.com/mirkobrombin/go-guard`
+
+Strictly declarative Attribute-Based Access Control (ABAC) library. Security policies are co-located with data models via struct tags — no external policy files, no rule engines.
+
+#### How it works
+
+Two-pass resolution on `guard.Can(user, resource, action)`:
+
+1. **Resolution pass** — scans fields tagged `guard:"role:<name>"`. If `field value == user.GetID()`, the named role is temporarily granted for this request only.
+2. **Authorization pass** — scans fields tagged `guard:"<action>:<roles>"`. Checks whether the user's static roles + resolved dynamic roles satisfy the permission.
+
+```go
+type User struct {
+    ID    string
+    Roles []string
+}
+func (u User) GetID() string      { return u.ID }
+func (u User) GetRoles() []string { return u.Roles }
+
+type Document struct {
+    OwnerID string `guard:"role:owner"`              // dynamic: owner if ID matches
+    Data    string `guard:"read:owner,admin; write:owner; delete:admin"`
+}
+
+err := guard.Can(currentUser, document, "write")  // nil = allowed, non-nil = forbidden
+```
+
+- **Static roles**: permanent, returned by `GetRoles()` (e.g., `admin`, `moderator`)
+- **Dynamic roles**: resolved per-request by field comparison (e.g., `owner`, `collaborator`)
+- Field ordering in the struct does not matter — resolution pass always runs first
+
+**Typical use:** any Go HTTP handler or service that needs permission checks on data resources. Pairs naturally with go-module-router (middleware checking `Can` before `Handle`) and go-httpx (client-side role-aware request decoration).
+
+---
+
+### go-lock
+
+`github.com/mirkobrombin/go-lock`
+
+Focused distributed locking toolkit. Implements the `Locker` interface from go-foundation with a Redis backend; placeholder slots for Redlock and etcd.
+
+#### API
+
+```go
+client := redis.NewClient(opts)
+locker := lock.NewRedisLocker(client)
+
+err     := locker.Acquire(ctx, "resource-key", 30*time.Second)   // block until acquired
+ok, err := locker.TryLock(ctx, "resource-key", 30*time.Second)   // non-blocking
+err      = locker.Release(ctx, "resource-key")
+```
+
+**Errors:** `ErrLockNotAcquired`, `ErrNotImplemented` (etcd/Redlock placeholders).
+
+**Locker interface** (from `go-foundation/pkg/lock`):
+
+```go
+type Locker interface {
+    Acquire(ctx context.Context, key string, ttl time.Duration) error
+    TryLock(ctx context.Context, key string, ttl time.Duration) (bool, error)
+    Release(ctx context.Context, key string) error
+}
+```
+
+**Typical use:** leader election, exclusive resource access, distributed cron deduplication. go-warp also exposes a higher-level distributed lock built on the sync bus — prefer go-lock when you need a standalone lock without the full Warp stack.
+
+---
+
+### go-httpx
+
+`github.com/mirkobrombin/go-httpx`
+
+Middleware-friendly HTTP client wrapping `http.RoundTripper`. Composable middleware pipeline with built-in retry and circuit breaker support via go-foundation resiliency primitives.
+
+```go
+cb := resiliency.NewCircuitBreaker(resiliency.WithThreshold(5))
+client := httpx.New(nil,
+    httpx.Header("User-Agent", "ic-worker/1.0"),
+)
+client.WithRetry(resiliency.WithAttempts(5), resiliency.WithDelay(500*time.Millisecond))
+client.WithBreaker(cb)
+
+resp, err := client.Do(req)  // automatic retry + circuit break on failure
+```
+
+- `httpx.New(c *http.Client, mw ...Middleware)` — wraps an existing client or creates one (15 s default timeout)
+- Middleware applied in reverse order (outermost last), standard `RoundTripper` composition
+- `WithRetry(opts...)` — delegates to `resiliency.Retry` from go-foundation
+- `WithBreaker(b)` — wraps execution in `CircuitBreaker.Execute`; retry + breaker can be combined
+
+**Typical use:** all outbound HTTP calls to third-party APIs (Apify, SocialBlade, YouTube, Twitch, etc.). Replaces raw `http.Client` usage with automatic retry on transient errors and circuit breaking when upstreams degrade. Essential for the IC Worker scrapers which make many flaky external calls.
+
+---
+
+### go-metrics
+
+`github.com/mirkobrombin/go-metrics`
+
+Tiny counter abstraction for Go applications. Defines a minimal `Counter` interface with a concurrency-safe in-memory implementation; custom adapters (Prometheus, OpenTelemetry, etc.) plug in behind the same contract.
+
+#### Interface & implementation
+
+```go
+// Counter contract — anything can implement this
+type Counter interface {
+    Inc()
+    Add(int64)
+    Value() int64
+}
+
+// In-memory, mutex-protected — useful for tests and lightweight services
+counter := metrics.NewCounter()
+counter.Inc()
+counter.Add(4)
+fmt.Println(counter.Value()) // 5
+```
+
+To plug in Prometheus, wrap a `prometheus.Counter` behind a struct that satisfies `Counter` — no dependency on Prometheus inside go-metrics itself.
+
+**Typical use:** business-level counters decoupled from the metrics backend. Examples: tasks processed, errors per handler, API call rate, circuit-breaker trips. Complements go-logger's `PrometheusSink` (which tracks log-level counts) for domain-level instrumentation.
+
+**IC relevance:** Worker needs per-handler task and error counters (currently absent). go-metrics provides the abstraction layer — `SimpleCounter` in tests, Prometheus adapter in production. Works alongside the `PrometheusSink` contributed to go-logger.
+
+---
+
+### go-plugin
+
+`github.com/mirkobrombin/go-plugin`
+
+Structured plugin registry with deterministic lifecycle management, reflection-based discovery, go-module-router integration, and an `ExecSandbox` for out-of-process plugins.
+
+#### Core interface & registry
+
+```go
+// Every plugin satisfies three methods
+type Plugin interface {
+    Name() string
+    Start() error
+    Stop() error
+}
+
+registry := plugin.NewRegistry()
+_ = registry.Register(myPlugin{})
+
+errs := registry.StartAll()  // insertion order
+errs  = registry.StopAll()   // reverse insertion order (proper teardown)
+
+p, ok := registry.Get("my-plugin")
+names  := registry.Names()   // slice in insertion order
+```
+
+#### Router integration
+
+Plugins that expose `Routes() []registry.Route` are automatically bridged into go-module-router:
+
+```go
+plugin.RegisterRouteProviders(registry)  // scans all registered plugins, forwards routes
+```
+
+#### ExecSandbox — out-of-process plugins
+
+Runs a plugin binary as a child process with a JSON-over-stdio protocol:
+
+```go
+sandbox := plugin.NewExecSandbox("/path/to/plugin-binary", "--flag")
+// Start: launches process, waits up to 5 s for {"ready":true} on stdout
+// Stop:  sends {"cmd":"stop"} on stdin, waits for process exit
+```
+
+Also supports `.so` shared-library loading (`so_loader.go`) and reflection-based discovery (`discover.go`).
+
+**Typical use:** applications with a defined set of named subsystems that need ordered startup/shutdown — e.g., background workers, integrations, feature modules. The router integration makes it trivial to ship a plugin that both runs a service and registers HTTP routes.
+
+**IC relevance (medium):** IC Worker's platform handlers (`ITaskHandler` in C#) could be modelled as plugins for ordered init and clean shutdown, but their dispatch-by-task-type pattern doesn't need the full `Start/Stop` lifecycle. More interesting for future pluggable scrapers loaded at runtime. `ExecSandbox` is directly relevant for CDP-based scrapers (IC already has a CDP endpoint) — isolates the browser driver in a separate process.
+
+---
+
+### go-retry
+
+`github.com/mirkobrombin/go-retry`
+
+Compact retry helper exposing `go-foundation` resiliency as a one-liner. Wraps `resiliency.Retry` with exponential backoff; defaults to 3 attempts when given a non-positive count; stops early on context cancellation.
+
+```go
+err := retry.Do(ctx, func() error {
+    return doSomethingFlaky()
+}, 5)
+```
+
+- `attempts <= 0` → silently falls back to 3
+- No other options — for finer control (custom delays, jitter, backoff curve) use `go-foundation/resiliency.Retry` directly
+- go-httpx `WithRetry()` also delegates to go-foundation — use go-httpx for HTTP calls, go-retry for everything else
+
+**Typical use:** simple retry for non-HTTP operations: initial DB/Redis connection setup, transient write failures, message broker reconnects. For HTTP scraping calls in IC Worker, prefer go-httpx's `WithRetry()` which allows setting delays alongside the retry count.
+
+**Relationship to other modules:**
+
+```
+go-foundation/resiliency  ←── core implementation (WithAttempts, WithDelay, backoff)
+        ├── go-retry          compact API: retry.Do(ctx, fn, n)
+        └── go-httpx          HTTP client: client.WithRetry(resiliency.WithAttempts(5), ...)
+```
+
+---
+
+### go-secrets
+
+`github.com/mirkobrombin/go-secrets`
+
+Compact secret store abstraction with three implementations behind a uniform `Store` interface. Designed to be the single access point for credentials and sensitive values — swap backends without touching call sites.
+
+#### Interface & implementations
+
+```go
+type Store interface {
+    Set(key string, value []byte) error
+    Get(key string) ([]byte, error)
+    Delete(key string) error
+}
+```
+
+| Implementation | Behaviour                                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `MemoryStore`  | In-memory, mutex-protected. Get/Set defensively copy bytes — no aliasing. Use in tests and ephemeral state. |
+| `EnvStore`     | Read-only. Reads from `os.LookupEnv`. `Set`/`Delete` return `ErrReadOnly`.                                  |
+| `VaultStore`   | Placeholder. All methods return `ErrNotImplemented` — implementation slot for HashiCorp Vault.              |
+
+```go
+// Tests / ephemeral
+store := secrets.NewMemoryStore()
+_ = store.Set("db-password", []byte("super-secret"))
+v, _ := store.Get("db-password")
+
+// Production — read from Docker / K8s env
+store := secrets.NewEnvStore()          // read-only; Set returns ErrReadOnly
+v, err := store.Get("TWITCH_CLIENT_SECRET")
+if errors.Is(err, secrets.ErrNotFound) { /* key not in env */ }
+```
+
+**Errors:** `ErrNotFound`, `ErrReadOnly`, `ErrNotImplemented`.
+
+**IC relevance (HIGH):** IC currently hardcodes API keys and DB passwords in `appsettings.json` (Twitch, YouTube, Apify, SQL Server, etc.). Go services should source all secrets from environment variables — `EnvStore` is the direct adapter. `MemoryStore` enables clean unit tests without real credentials. `VaultStore` placeholder is the path forward when IC moves to a proper secret manager.
+
+**Contribution opportunity:** Implement `VaultStore` with `github.com/hashicorp/vault-client-go`. Low priority for now — `EnvStore` + Docker secrets covers IC's current needs.
+
+---
+
+### go-worker
+
+`github.com/mirkobrombin/go-worker`
+
+Fixed-size worker pool with graceful shutdown and context propagation. Small API surface: create a pool, submit tasks, shut down cleanly.
+
+#### Implementation details
+
+```go
+type Task func(context.Context) error
+
+pool := worker.NewPool(4)   // 4 goroutines; n<=0 → normalized to 1
+defer pool.Shutdown()       // idempotent (sync.Once); drains queue then cancels context
+
+ok := pool.Submit(func(ctx context.Context) error {
+    // ctx is cancelled by Shutdown after queue drains
+    return doWork(ctx)
+})
+// ok == false → pool already shut down, task was NOT submitted
+```
+
+**Key implementation choices:**
+
+- **Unbuffered task channel** — `Submit` blocks until a worker goroutine is free. This is natural backpressure: the caller cannot enqueue faster than workers consume.
+- **Graceful shutdown** — `Shutdown` sets `closed=true`, closes the channel (workers drain remaining tasks), waits on `WaitGroup`, then cancels the shared context. Already-running tasks see the cancelled context.
+- **Idempotent** — multiple `Shutdown()` calls are safe (guarded by `sync.Once`).
+
+**IC relevance (VERY HIGH):** go-worker is the direct Go equivalent of IC's competing-consumer `Worker.cs`.
+
+The natural integration with go-relay:
+
+```
+Redis Stream (consumer group)
+    └── go-relay.Consume → pool.Submit(task) ← blocks if all workers busy
+                                ↓
+                         pool.worker() → task(ctx) → handler.Handle(msg)
+                                ↓
+                         go-relay.Ack(msg)
+```
+
+The unbuffered channel replicates the RabbitMQ `prefetchCount=1` behaviour: each worker holds exactly one in-flight task, no more messages are pulled from the stream until a slot is free. `NewPool(n)` maps directly to the per-handler `MaxConcurrentRequests` config already present in IC.
+
+**Horizontal scaling:** multiple `go-worker` process instances each run their own pool and consume from the same Redis Stream consumer group — go-relay distributes messages across instances. This satisfies the requirement that workers be distributable and launchable in parallel.
+
+**Potential contribution:** `WithBufferSize(n)` option to use a buffered channel (`make(chan Task, n)`) for scenarios where a small lookahead prefetch is desirable.
+
+---
+
+### go-wormhole
+
+`github.com/fabricatorsltd/go-wormhole`
+
+Entity Framework-inspired ORM / Data Mapper for Go. Code-first migrations, type-safe queries via a pointer-tracking DSL, Unit of Work pattern, and multiple backends — all without code generation.
+
+#### Core API
+
+```go
+ctx := wormhole.New(provider, wormhole.WithLogger(lg))
+
+// Unit of Work
+ctx.Add(&user)              // mark for insert
+ctx.Attach(&user)           // start change tracking
+ctx.Remove(&user)           // mark for delete
+err  := ctx.Save()          // flush (partial UPDATE for tracked entities)
+<-ctx.SaveAsync()           // non-blocking flush
+
+// Fluent query builder
+user := &User{}
+err = ctx.Set[User]().
+    Where(&User{}, func(u *User) bool { return u.Active }).
+    Include("Orders").
+    AsNoTracking().
+    Find(42)  // by PK
+```
+
+#### Struct tags
+
+```go
+type User struct {
+    ID    int    `db:"primary_key;auto_increment"`
+    Email string `db:"column:email;unique"`
+    Name  string `db:"column:name"`
+}
+```
+
+#### Lifecycle hooks (auto-discovered)
+
+`BeforeSave()`, `AfterInsert()`, `AfterUpdate()`, `AfterDelete()` — implement on the entity struct to participate in the save pipeline.
+
+#### Providers
+
+| Provider      | Backend                                     |
+| ------------- | ------------------------------------------- |
+| SQL (default) | PostgreSQL, SQLite, MySQL, MSSQL — via `database/sql` stdlib + compilatore SQL interno |
+| MongoDB       | MongoDB driver                              |
+| Slipstream    | go-slipstream Bitcask engine                |
+| MemDoc        | In-memory (tests / offline)                 |
+
+#### Code-first migrations CLI
+
+```bash
+wormhole init                          # initialise project
+wormhole migrations add CreateUser     # generate migration from code diff
+wormhole database update               # apply pending migrations
+wormhole migrations list               # show history
+wormhole dbcontext scaffold            # reverse-engineer from existing DB
+```
+
+Multi-dialect DDL generation; cross-engine data migration (e.g. MSSQL → Postgres).
+
+**Key features:** EF Core-like DX with idiomatic Go; zero code generation; change tracker (only changed columns in UPDATE); lazy + eager loading (`Include`); resilience (retry, circuit breaker, `MultiError`); engine-specific naming (PascalCase ↔ snake_case).
+
+**Typical use:** data access layer for services that need familiar ORM ergonomics without leaving Go. Swap providers from MemDoc (tests) to SQLite (dev) to Postgres (prod) with a single constructor change.
+
+---
+
+## Design principles
+
+- All modules are `CGO_ENABLED=0` safe — no C dependencies
+- **go-foundation** is the only shared base; all other modules depend on it (or nothing)
+- go-relay/v2 is broker-agnostic: `MemoryBroker` requires zero infrastructure; swap to `RedisBroker` or `NATSBroker` without touching handler code
+- go-signal/v2 (in-process, ephemeral) + go-relay/v2 (persistent, retryable) form a two-tier async pipeline:
+  - go-signal for immediate in-process reactions
+  - go-relay for durable background work that must complete
+- go-warp syncbus supports multi-node cache consistency without changing application code (swap backend)
+- go-module-router/v2 Action transport auto-emits on go-signal/v2 after every dispatch — side effects require zero boilerplate in the handler
+- go-revert/v2 is panic-safe: a panicking step triggers full rollback, never leaves partial state
+
+## Ecosystem integration pattern
+
+```
+User intent
+    │
+    ▼
+go-module-router/v2   — receives and routes the intent, injects dependencies
+    │
+    ├── go-revert/v2   — wraps multi-step logic in compensatable workflows
+    │
+    ├── go-signal/v2   — emits the completed action for in-process side effects
+    │
+    └── go-relay/v2    — enqueues durable background jobs for async/retryable work
+            │
+            ├── MemoryBroker (dev / single-node)
+            ├── RedisBroker  (production)
+            └── NATSBroker   (high-throughput / distributed)
+
+go-wormhole   — data access layer (code-first ORM, Unit of Work)
+    └── providers: SQL / MongoDB / go-slipstream / MemDoc
+
+go-warp/v1    — caching + distributed cache invalidation layer
+    └── sits between app logic and primary storage (go-wormhole or go-slipstream)
+
+go-slipstream — embedded Bitcask+Raft database
+    └── used by go-wormhole (Slipstream provider) and go-warp (as L2 store)
+```
+
+---
+
+## Module quick-reference
+
+| Module                  | Import path                                   | Purpose                                                      | External deps                            |
+| ----------------------- | --------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------- |
+| **go-auth**             | `github.com/mirkobrombin/go-auth`             | HMAC-SHA256 token signing                                    | None                                     |
+| **go-cli-builder/v2**   | `github.com/mirkobrombin/go-cli-builder/v2`   | Declarative struct-tag CLI                                   | go-foundation                            |
+| **go-conf-builder/v2**  | `github.com/mirkobrombin/go-conf-builder/v2`  | Multi-source config loader                                   | go-foundation                            |
+| **go-foundation**       | `github.com/mirkobrombin/go-foundation`       | Shared primitives (DI, tags, resiliency, …)                  | None                                     |
+| **go-guard**            | `github.com/mirkobrombin/go-guard`            | Declarative ABAC                                             | go-foundation                            |
+| **go-httpx**            | `github.com/mirkobrombin/go-httpx`            | Middleware HTTP client                                       | go-foundation                            |
+| **go-lock**             | `github.com/mirkobrombin/go-lock`             | Distributed locking                                          | go-foundation, redis                     |
+| **go-logger**           | `github.com/mirkobrombin/go-logger`           | Structured logging + sinks                                   | lumberjack                               |
+| **go-metrics**          | `github.com/mirkobrombin/go-metrics`          | Counter abstraction                                          | None                                     |
+| **go-module-router/v2** | `github.com/mirkobrombin/go-module-router/v2` | Transport-agnostic router + DI                               | fasthttp, zap, go-relay/v2, go-signal/v2 |
+| **go-plugin**           | `github.com/mirkobrombin/go-plugin`           | Plugin registry + lifecycle                                  | go-module-router/v2                      |
+| **go-relay/v2**         | `github.com/mirkobrombin/go-relay/v2`         | Async job processing                                         | go-foundation, nats, redis               |
+| **go-retry**            | `github.com/mirkobrombin/go-retry`            | Compact retry helper                                         | go-foundation                            |
+| **go-revert/v2**        | `github.com/mirkobrombin/go-revert/v2`        | Saga + compensation                                          | go-foundation                            |
+| **go-secrets**          | `github.com/mirkobrombin/go-secrets`          | Secret store abstraction                                     | None                                     |
+| **go-signal/v2**        | `github.com/mirkobrombin/go-signal/v2`        | Type-safe in-process event bus                               | go-foundation                            |
+| **go-slipstream**       | `github.com/mirkobrombin/go-slipstream`       | Embedded Bitcask+Raft database                               | raft, zstd, otel, …                      |
+| **go-state-flow**       | `github.com/mirkobrombin/go-state-flow`       | Declarative FSM                                              | go-foundation                            |
+| **go-struct-flags/v2**  | `github.com/mirkobrombin/go-struct-flags/v2`  | Flag-to-struct binding (deprecated → go-foundation/pkg/tags) | None                                     |
+| **go-warp/v1**          | `github.com/mirkobrombin/go-warp/v1`          | L1/L2 cache + distributed sync                               | Heavy: redis, nats, kafka, otel, …       |
+| **go-worker**           | `github.com/mirkobrombin/go-worker`           | Fixed-size worker pool                                       | None                                     |
+| **go-wormhole**         | `github.com/fabricatorsltd/go-wormhole`       | EF-style ORM + code-first migrations                         | mongo-driver, go-slipstream, glebarez/sqlite (tests) |
