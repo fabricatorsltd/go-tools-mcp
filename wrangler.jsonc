@@ -9,7 +9,7 @@
   "durable_objects": {
     "bindings": [
       {
-        "name": "GoToolsMCP",
+        "name": "MCP_OBJECT",
         "class_name": "GoToolsMCP"
       }
     ]
