@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { INDEX_CONTENT } from "./data";
 import { parseIndex, findModule, searchModules } from "./parser";
+import { LANDING_HTML } from "./src/landing";
 
 // Parse once at Worker startup — content is static per deployment
 const { modules, ecosystem } = parseIndex(INDEX_CONTENT);
@@ -126,4 +127,16 @@ export class GoToolsMCP extends McpAgent {
   }
 }
 
-export default GoToolsMCP.serve("/mcp");
+const mcpHandler = GoToolsMCP.serve("/mcp");
+
+export default {
+  async fetch(request: Request, env: unknown, ctx: ExecutionContext): Promise<Response> {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/" || pathname === "") {
+      return new Response(LANDING_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+    return mcpHandler.fetch(request, env, ctx);
+  },
+};
