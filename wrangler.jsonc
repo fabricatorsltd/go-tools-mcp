@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "go-tools-mcp",
+  "main": "index.ts",
+  "compatibility_date": "2025-03-19",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // McpAgent requires a Durable Object for per-connection state management.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GoToolsMCP",
+        "class_name": "GoToolsMCP"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GoToolsMCP"]
+    }
+  ]
+}
