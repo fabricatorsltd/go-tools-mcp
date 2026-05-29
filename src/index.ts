@@ -13,11 +13,12 @@ interface Env {
 
 export class GoToolsMCP extends McpAgent<Env> {
   server = new McpServer({
-    name: "go-tools",
-    version: "0.1.0",
+    name: "go-foundation",
+    version: "1.1.0",
     description:
-      "Reference documentation for the go-tools ecosystem. " +
-      "22 modules covering auth, caching, routing, jobs, ORM, FSM, logging, and more.",
+      "Reference documentation for the go-foundation ecosystem. " +
+      "go-foundation (40+ packages) plus standalone modules (go-slipstream, go-warp, go-wormhole). " +
+      "Includes migration guide from deprecated go-tools.",
   });
 
   async init(): Promise<void> {
