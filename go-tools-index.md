@@ -35,6 +35,8 @@ Many former standalone modules have been merged into `go-foundation`. For ~90% o
 
 ## Modules
 
+---
+
 ### go-foundation
 
 `github.com/mirkobrombin/go-foundation`
