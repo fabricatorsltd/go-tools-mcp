@@ -370,9 +370,10 @@ export const LANDING_HTML = `<!DOCTYPE html>
     <header>
       <h1><span>go-tools</span></h1>
       <p class="tagline">
-        22 Go modules by <a href="https://github.com/mirkobrombin" style="color:var(--accent);text-decoration:none">Mirko Brombin</a> /
-        <a href="https://github.com/fabricatorsltd" style="color:var(--accent);text-decoration:none">fabricators</a> —
-        covering auth, caching, routing, async jobs, ORM, FSM, logging, and more.
+        The <a href="https://github.com/mirkobrombin" style="color:var(--accent);text-decoration:none">Mirko Brombin</a> /
+        <a href="https://github.com/fabricatorsltd" style="color:var(--accent);text-decoration:none">fabricators</a>
+        Go ecosystem — <strong>go-foundation</strong> (the shared base, 40+ <code class="ic">pkg/</code> subpackages),
+        <strong>go-slipstream</strong>, <strong>go-warp</strong>, and <strong>go-wormhole</strong>.
         The <a href="https://modelcontextprotocol.io" style="color:var(--accent);text-decoration:none">MCP</a> server
         gives any AI client instant access to the full documentation.
       </p>
@@ -390,12 +391,12 @@ export const LANDING_HTML = `<!DOCTYPE html>
         <h2><span class="icon">📐</span> Design Principles</h2>
         <ul class="principles-list">
           <li>All modules are <code class="ic">CGO_ENABLED=0</code> safe — no C dependencies</li>
-          <li><strong>go-foundation</strong> is the only shared base; all other modules depend on it (or nothing)</li>
-          <li><strong>go-relay/v2</strong> is broker-agnostic: swap <code class="ic">MemoryBroker</code> → <code class="ic">RedisBroker</code> or <code class="ic">NATSBroker</code> without touching handler code</li>
-          <li><strong>go-signal/v2</strong> (in-process, ephemeral) + <strong>go-relay/v2</strong> (persistent, retryable) form a two-tier async pipeline — signal for immediate reactions, relay for durable background work</li>
-          <li><strong>go-warp</strong> syncbus supports multi-node cache consistency without changing application code (swap backend)</li>
-          <li><strong>go-module-router/v2</strong> Action transport auto-emits on go-signal/v2 after every dispatch — side effects require zero boilerplate in the handler</li>
-          <li><strong>go-revert/v2</strong> is panic-safe: a panicking step triggers full rollback, never leaves partial state</li>
+          <li><strong>go-foundation</strong> is the only shared base; zero external dependencies, every other module depends on it</li>
+          <li><strong>pkg/events</strong> (in-process, ephemeral) + <strong>pkg/relay</strong> (persistent, retryable) form a two-tier async pipeline — events for immediate side effects, relay for durable background work</li>
+          <li><strong>go-warp</strong> syncbus supports multi-node cache consistency without changing application code — swap backend (InMemory, Mesh, Redis, NATS, Kafka)</li>
+          <li><strong>pkg/srv</strong> + <strong>pkg/dispatcher</strong> replace the deprecated <code class="ic">go-module-router/v2</code> in v1.1.0 — HTTP and named-action dispatch under one roof</li>
+          <li><strong>pkg/saga</strong> is panic-safe: a panicking step triggers full LIFO rollback, never leaves partial state</li>
+          <li><strong>pkg/app</strong> is the single entrypoint — orchestrates DI, HTTP, dispatch, and scheduling. <strong>pkg/hosting</strong> manages service lifecycle with health endpoints and graceful shutdown</li>
         </ul>
       </section>
 
@@ -405,23 +406,21 @@ export const LANDING_HTML = `<!DOCTYPE html>
         <div class="code-block copyable"><button class="copy-btn" aria-label="Copy">Copy</button><pre>User intent
     │
     ▼
-go-module-router/v2   — receives and routes the intent, injects dependencies
+pkg/app            — single entrypoint: DI, HTTP, dispatch, scheduling
     │
-    ├── go-revert/v2   — wraps multi-step logic in compensatable workflows
-    │
-    ├── go-signal/v2   — emits the completed action for in-process side effects
-    │
-    └── go-relay/v2    — enqueues durable background jobs for async/retryable work
+    ├── pkg/srv         — HTTP routing, binding, auth, validation, rate limit
+    ├── pkg/dispatcher  — named action dispatch (GUI/TUI/CLI)
+    ├── pkg/saga        — wraps multi-step logic in compensatable workflows
+    ├── pkg/events      — emits completed action for in-process side effects
+    └── pkg/relay       — enqueues durable background jobs
             │
-            ├── MemoryBroker (dev / single-node)
-            ├── RedisBroker  (production)
-            └── NATSBroker   (high-throughput / distributed)
+            └── MemoryBroker (dev / single-node) — zero infrastructure
 
-go-wormhole   — data access layer (code-first ORM, Unit of Work)
-    └── providers: SQL / MongoDB / go-slipstream / MemDoc
+go-wormhole   — data access layer (EF-style ORM, Unit of Work, code-first migrations)
+    └── providers: SQL (PostgreSQL, SQLite, MySQL, MSSQL) / MongoDB / go-slipstream / MemDoc
 
-go-warp/v1    — caching + distributed cache invalidation layer
-    └── sits between app logic and primary storage (go-wormhole or go-slipstream)
+go-warp/v1    — caching + distributed cache invalidation
+    └── sits between app logic and primary storage
 
 go-slipstream — embedded Bitcask+Raft database
     └── used by go-wormhole (Slipstream provider) and go-warp (as L2 store)</pre></div>
@@ -430,34 +429,17 @@ go-slipstream — embedded Bitcask+Raft database
       <!-- Module Quick Reference -->
       <section>
         <h2><span class="icon">📦</span> Module Quick Reference</h2>
+        <p style="color:var(--muted);margin-bottom:12px">Post-v1.1.0 consolidation: most former standalone modules (<code class="ic">go-auth</code>, <code class="ic">go-relay</code>, <code class="ic">go-signal</code>, <code class="ic">go-revert</code>, <code class="ic">go-state-flow</code>, …) are now <code class="ic">pkg/</code> subpackages of <strong>go-foundation</strong>. Use <code class="ic">search_modules</code> to find the right one. The legacy standalone repos are still on GitHub but in maintenance mode.</p>
         <div class="table-wrap">
           <table class="module-table">
             <thead>
               <tr><th>Module</th><th>Import path</th><th>Purpose</th></tr>
             </thead>
             <tbody>
-              <tr><td><a href="https://github.com/mirkobrombin/go-auth" class="mod-link">go-auth</a></td><td><code class="ic">github.com/mirkobrombin/go-auth</code></td><td>HMAC-SHA256 token signing</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-cli-builder" class="mod-link">go-cli-builder/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-cli-builder/v2</code></td><td>Declarative struct-tag CLI</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-conf-builder" class="mod-link">go-conf-builder/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-conf-builder/v2</code></td><td>Multi-source config loader</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-foundation" class="mod-link">go-foundation</a></td><td><code class="ic">github.com/mirkobrombin/go-foundation</code></td><td>Shared primitives (DI, tags, resiliency, …)</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-guard" class="mod-link">go-guard</a></td><td><code class="ic">github.com/mirkobrombin/go-guard</code></td><td>Declarative ABAC</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-httpx" class="mod-link">go-httpx</a></td><td><code class="ic">github.com/mirkobrombin/go-httpx</code></td><td>Middleware HTTP client</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-lock" class="mod-link">go-lock</a></td><td><code class="ic">github.com/mirkobrombin/go-lock</code></td><td>Distributed locking</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-logger" class="mod-link">go-logger</a></td><td><code class="ic">github.com/mirkobrombin/go-logger</code></td><td>Structured logging + sinks</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-metrics" class="mod-link">go-metrics</a></td><td><code class="ic">github.com/mirkobrombin/go-metrics</code></td><td>Counter abstraction</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-module-router" class="mod-link">go-module-router/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-module-router/v2</code></td><td>Transport-agnostic router + DI</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-plugin" class="mod-link">go-plugin</a></td><td><code class="ic">github.com/mirkobrombin/go-plugin</code></td><td>Plugin registry + lifecycle</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-relay" class="mod-link">go-relay/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-relay/v2</code></td><td>Async job processing</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-retry" class="mod-link">go-retry</a></td><td><code class="ic">github.com/mirkobrombin/go-retry</code></td><td>Compact retry helper</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-revert" class="mod-link">go-revert/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-revert/v2</code></td><td>Saga + compensation</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-secrets" class="mod-link">go-secrets</a></td><td><code class="ic">github.com/mirkobrombin/go-secrets</code></td><td>Secret store abstraction</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-signal" class="mod-link">go-signal/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-signal/v2</code></td><td>Type-safe in-process event bus</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-slipstream" class="mod-link">go-slipstream</a></td><td><code class="ic">github.com/mirkobrombin/go-slipstream</code></td><td>Embedded Bitcask+Raft database</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-state-flow" class="mod-link">go-state-flow</a></td><td><code class="ic">github.com/mirkobrombin/go-state-flow</code></td><td>Declarative FSM</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-struct-flags" class="mod-link">go-struct-flags/v2</a></td><td><code class="ic">github.com/mirkobrombin/go-struct-flags/v2</code></td><td>Flag-to-struct binding <span style="color:var(--muted);font-size:0.8em">(deprecated)</span></td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-warp" class="mod-link">go-warp/v1</a></td><td><code class="ic">github.com/mirkobrombin/go-warp/v1</code></td><td>L1/L2 cache + distributed sync</td></tr>
-              <tr><td><a href="https://github.com/mirkobrombin/go-worker" class="mod-link">go-worker</a></td><td><code class="ic">github.com/mirkobrombin/go-worker</code></td><td>Fixed-size worker pool</td></tr>
-              <tr><td><a href="https://github.com/fabricatorsltd/go-wormhole" class="mod-link">go-wormhole</a></td><td><code class="ic">github.com/fabricatorsltd/go-wormhole</code></td><td>EF-style ORM + code-first migrations</td></tr>
+              <tr><td><a href="https://github.com/mirkobrombin/go-foundation" class="mod-link">go-foundation</a></td><td><code class="ic">github.com/mirkobrombin/go-foundation</code></td><td>Shared base — 40+ <code class="ic">pkg/</code> subpackages: app, hosting, srv, bind, dispatcher, di, configuration, events, auth, guard, relay, saga, fsm, caching, scheduler, logger, metrics, httpx, resiliency, secrets, plugin, worker, validation, openapi, telemetry, health, …</td></tr>
+              <tr><td><a href="https://github.com/mirkobrombin/go-slipstream" class="mod-link">go-slipstream</a></td><td><code class="ic">github.com/mirkobrombin/go-slipstream</code></td><td>Embedded Bitcask-style WAL database with ACID transactions, secondary indexing, optional Raft</td></tr>
+              <tr><td><a href="https://github.com/mirkobrombin/go-warp" class="mod-link">go-warp/v1</a></td><td><code class="ic">github.com/mirkobrombin/go-warp/v1</code></td><td>L1/L2 cache with configurable consistency, distributed invalidation, locking, leases, watch bus</td></tr>
+              <tr><td><a href="https://github.com/fabricatorsltd/go-wormhole" class="mod-link">go-wormhole</a></td><td><code class="ic">github.com/fabricatorsltd/go-wormhole</code></td><td>EF-style ORM: pointer-tracking DSL, Unit of Work, code-first migrations, lifecycle hooks. SQL + MongoDB + Slipstream + MemDoc providers</td></tr>
             </tbody>
           </table>
         </div>
@@ -469,7 +451,7 @@ go-slipstream — embedded Bitcask+Raft database
         <div class="tools-grid">
           <div class="tool-card">
             <div class="tool-name">list_modules</div>
-            <div class="tool-desc">All 22 modules with import paths and one-line descriptions.</div>
+            <div class="tool-desc">All top-level modules with import paths and one-line descriptions.</div>
           </div>
           <div class="tool-card">
             <div class="tool-name">get_module(name)</div>

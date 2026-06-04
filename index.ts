@@ -14,7 +14,10 @@ export class GoToolsMCP extends McpAgent {
     version: "0.1.0",
     description:
       "Reference documentation for the mirkobrombin / Fabricators Go modules ecosystem. " +
-      "22 modules covering auth, caching, routing, async jobs, ORM, FSM, logging, and more.",
+      "Covers go-foundation (the shared base, 40+ pkg/ subpackages: auth, caching, routing, " +
+      "DI, FSM, async jobs, logging, …), go-slipstream (embedded Bitcask+Raft database), " +
+      "go-warp (L1/L2 cache + distributed sync), and go-wormhole (EF-style ORM with " +
+      "code-first migrations).",
   });
 
   async init(): Promise<void> {
@@ -116,7 +119,7 @@ export class GoToolsMCP extends McpAgent {
     // ─── get_ecosystem ─────────────────────────────────────────────────────────
     this.server.tool(
       "get_ecosystem",
-      "Get the ecosystem integration diagram and design principles — how all 22 modules fit together, " +
+      "Get the ecosystem integration diagram and design principles — how the modules fit together, " +
         "dependency direction, two-tier async pipeline, caching layer, and data access patterns.",
       {},
       async () => {

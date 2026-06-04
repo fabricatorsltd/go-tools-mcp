@@ -211,7 +211,7 @@ export class GoToolsMCP extends McpAgent<Env> {
     version: "0.1.0",
     description:
       "Reference documentation for the mirkobrombin / Fabricators Go modules ecosystem. " +
-      "22 modules covering auth, caching, routing, jobs, ORM, FSM, logging, and more.",
+      "Covers go-foundation (shared base with 40+ pkg/ subpackages: auth, caching, routing, DI, FSM, jobs, logger, metrics, …), go-slipstream, go-warp, go-wormhole.",
   });
 
   async init(): Promise<void> {

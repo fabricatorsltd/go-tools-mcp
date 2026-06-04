@@ -2,7 +2,7 @@
 
 All modules are by [Mirko Brombin](https://github.com/mirkobrombin) / [fabricators](https://github.com/fabricatorsltd). Use this as a general reference when instructing agents.
 
-> **Last sync**: May 2026 — reflects go-foundation v1.1.0 + standalone modules. Supersedes all previous versions.
+> **Last sync**: June 2026 — reflects go-foundation v1.1.0 + go-wormhole v1.7.x + standalone modules. Supersedes all previous versions.
 
 ---
 
@@ -654,30 +654,116 @@ External deps: redis, nats, kafka, otel.
 
 `github.com/fabricatorsltd/go-wormhole`
 
-Entity Framework-inspired ORM / Data Mapper for Go. Code-first migrations, type-safe queries via pointer-tracking DSL, Unit of Work pattern, multiple backends — no code generation.
+Entity Framework-inspired ORM / Data Mapper for Go, built on go-foundation. Code-first migrations, type-safe queries via a pointer-tracking DSL (zero code generation), Unit of Work change tracker with partial UPDATE, lifecycle hooks, SQL + NoSQL providers.
 
-#### API
+Current line: v1.7.x.
+
+#### Bootstrap
 
 ```go
-ctx := wormhole.New(provider, wormhole.WithLogger(lg))
-ctx.Add(&user)
-ctx.Attach(&user)
-ctx.Remove(&user)
-ctx.Save()
+import (
+    "database/sql"
+    _ "github.com/glebarez/sqlite"
 
-user := &User{}
-err = ctx.Set[User]().
-    Where(&User{}, func(u *User) bool { return u.Active }).
-    Include("Orders").
-    AsNoTracking().
-    Find(42)
+    "github.com/fabricatorsltd/go-wormhole/pkg/dsl"
+    wormholesql "github.com/fabricatorsltd/go-wormhole/pkg/sql"
+)
+
+func init() {
+    // Pre-compute field memory offsets — one-time cost at startup.
+    dsl.Register(User{})
+    dsl.Register(Order{})
+}
+
+func main() {
+    db, _ := sql.Open("sqlite", "app.db")
+    wormholesql.RegisterDefault(db)
+}
 ```
 
-Providers: SQL (PostgreSQL, SQLite, MySQL, MSSQL), MongoDB, Slipstream, MemDoc.
+#### Query and mutate
 
-CLI: `wormhole init`, `wormhole migrations add`, `wormhole database update`, `wormhole dbcontext scaffold`.
+```go
+import (
+    wh "github.com/fabricatorsltd/go-wormhole/pkg/context"
+    "github.com/fabricatorsltd/go-wormhole/pkg/dsl"
+    "github.com/fabricatorsltd/go-wormhole/pkg/provider"
+    "github.com/fabricatorsltd/go-wormhole/pkg/query"
+)
 
-External deps: mongo-driver, go-slipstream, glebarez/sqlite.
+ctx := wh.New(provider.Default())
+defer ctx.Close()
+
+// Fetch by PK — auto-tracked as Unchanged
+var u User
+ctx.Set(&u).Find(42)
+
+// Mutate in plain Go
+u.Age = 35
+
+// Flush — emits UPDATE "users" SET "age" = ? WHERE "id" = ?
+ctx.Save()
+
+// Type-safe DSL via pointer tracking
+var users []User
+ctx.Set(&users).
+    Where(dsl.Gt(&u, &u.Age, 18)).
+    OrderBy("age", query.Desc).
+    Limit(10).
+    All()
+
+// Insert + delete
+ctx.Add(&User{Name: "Alice", Age: 30})
+ctx.Remove(&u)
+ctx.Save()
+```
+
+#### Entity states
+
+`Unchanged` (matches DB) → `Modified` (dirty, partial UPDATE) → `Unchanged` after `Save`.
+`Added` → INSERT → `Unchanged`. `Remove()` → `Deleted` → DELETE → removed from tracker.
+
+Dirty detection: snapshot taken at `Attach`/`Add`/`Find`, `DetectChanges()` diffs each field via `reflect.DeepEqual` on `Save`. Only changed columns hit the wire.
+
+#### Tags
+
+`primary_key`, `auto_increment`, `column:user_name`, `type:varchar(255)`, `nullable`, `index:idx_email`, `default:'active'`. Untagged fields default to snake_case (`UserID` → `user_id`).
+
+#### Providers
+
+PostgreSQL, SQLite, MySQL, MSSQL (via `pkg/sql`), MongoDB, go-slipstream (Bitcask), MemDoc (in-memory). Engine-specific naming auto-applied (PascalCase for MSSQL, snake_case elsewhere). Cross-engine sync handles identity/sequence translation (e.g. MSSQL → Postgres).
+
+#### Resilience
+
+Retry with backoff, circuit breaker, aggregated `MultiError` — exposed by the provider layer for transient driver failures.
+
+#### Lifecycle hooks
+
+Auto-discovered via reflection: `BeforeSave()`, `AfterInsert()`, `BeforeDelete()`, `AfterUpdate()`, etc.
+
+#### CLI
+
+Two ways to invoke. Build-tag mode reuses your project's binary:
+
+```bash
+go run -tags wormhole_cli . migrations add CreateUser
+go run -tags wormhole_cli . database update
+go run -tags wormhole_cli . migrations list
+go run -tags wormhole_cli . migrations script
+```
+
+Or install the standalone binary:
+
+```bash
+go install github.com/fabricatorsltd/go-wormhole/cmd/wormhole@latest
+wormhole migrations add CreateUser
+wormhole database update
+wormhole dbcontext scaffold
+```
+
+Configuration via `WORMHOLE_DSN` and `WORMHOLE_DRIVER` env vars (`sqlite`, `postgres`, `mysql`, `sqlserver`).
+
+External deps: mongo-driver, go-slipstream, glebarez/sqlite. DI via `go-foundation/pkg/di`.
 
 ---
 
@@ -727,4 +813,4 @@ go-slipstream — embedded Bitcask+Raft database
 | **go-foundation** | `github.com/mirkobrombin/go-foundation` | Shared primitives + hosted services, routing, DI, config, events, auth, guard, relay, saga, FSM, caching, scheduler, logger, metrics, httpx, resiliency, secrets, plugin, worker, validation, serializer, telemetry, health, pipeline, testutil, errutil, contracts, openapi, bind, dispatcher, app, hosting, srv | None |
 | **go-slipstream** | `github.com/mirkobrombin/go-slipstream` | Embedded Bitcask+Raft database | raft, zstd, otel |
 | **go-warp/v1** | `github.com/mirkobrombin/go-warp/v1` | L1/L2 cache + distributed sync | redis, nats, kafka, otel |
-| **go-wormhole** | `github.com/fabricatorsltd/go-wormhole` | EF-style ORM + code-first migrations | mongo-driver, go-slipstream |
+| **go-wormhole** | `github.com/fabricatorsltd/go-wormhole` | EF-style ORM, pointer-tracking DSL, Unit of Work, code-first migrations, lifecycle hooks, retry/circuit breaker, MSSQL/Postgres cross-engine sync | mongo-driver, go-slipstream, glebarez/sqlite |

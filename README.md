@@ -8,10 +8,12 @@ Exposes four tools to any MCP client (Claude, Cursor, Windsurf, Copilot CLI, …
 
 | Tool                    | Description                                                   |
 | ----------------------- | ------------------------------------------------------------- |
-| `list_modules`          | All 22 modules with import paths and one-line descriptions    |
+| `list_modules`          | All top-level modules with import paths and one-line descriptions |
 | `get_module(name)`      | Complete docs for a module — API, examples, integration notes |
 | `search_modules(query)` | Full-text search across all module docs                       |
 | `get_ecosystem`         | Integration diagram + design principles                       |
+
+Indexed modules (post-v1.1.0 consolidation): `go-foundation` (40+ `pkg/` subpackages: auth, caching, routing, DI, FSM, jobs, logger, metrics, …), `go-slipstream`, `go-warp/v1`, `go-wormhole`.
 
 ## Setup
 
